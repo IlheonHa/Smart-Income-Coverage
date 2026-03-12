@@ -195,75 +195,81 @@ export default function App() {
       const element = reportRef.current;
       
       const canvas = await html2canvas(element, {
-        scale: 2.5, // Balanced scale for quality vs file size
+        scale: 2, 
         useCORS: true,
+        allowTaint: true,
         logging: false,
         backgroundColor: '#F8FAFC',
         windowWidth: 1200,
         onclone: (clonedDoc) => {
-          const clonedReport = clonedDoc.getElementById('report-container');
-          if (clonedReport) {
-            clonedReport.style.width = '1000px';
-            clonedReport.style.margin = '0 auto';
-            clonedReport.style.padding = '40px';
-          }
+          try {
+            // Aggressively remove all oklab/oklch from the entire document's HTML
+            // This is the most reliable way to stop html2canvas from seeing 이 strings
+            const stripColors = (html: string) => {
+              return html.replace(/okl[abch]+\([^)]+\)/g, '#1e293b');
+            };
 
-          // Hide counseling script in PDF as requested
-          const script = clonedDoc.getElementById('counseling-script');
-          if (script) {
-            script.style.display = 'none';
-          }
+            if (clonedDoc.documentElement) {
+              // We do it in chunks to be safer, or just style tags + inline styles
+              const styleTags = clonedDoc.getElementsByTagName('style');
+              for (let i = 0; i < styleTags.length; i++) {
+                styleTags[i].innerHTML = stripColors(styleTags[i].innerHTML);
+              }
 
-          const style = clonedDoc.createElement('style');
-          style.innerHTML = `
-            * { 
-              transition: none !important;
-              animation: none !important;
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-            [class*="shadow"] {
-              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05) !important;
-            }
-          `;
-          clonedDoc.head.appendChild(style);
-
-          // Strip oklab/oklch
-          const styleTags = clonedDoc.getElementsByTagName('style');
-          for (let i = 0; i < styleTags.length; i++) {
-            try {
-              styleTags[i].innerHTML = styleTags[i].innerHTML
-                .replace(/oklab\([^)]+\)/g, '#1e293b')
-                .replace(/oklch\([^)]+\)/g, '#1e293b');
-            } catch (e) {}
-          }
-
-          const allElements = clonedDoc.getElementsByTagName('*');
-          for (let i = 0; i < allElements.length; i++) {
-            const el = allElements[i] as HTMLElement;
-            if (el.style && el.style.cssText) {
-              const cssText = el.style.cssText;
-              if (cssText.includes('oklab') || cssText.includes('oklch')) {
-                el.style.cssText = cssText
-                  .replace(/oklab\([^)]+\)/g, '#1e293b')
-                  .replace(/oklch\([^)]+\)/g, '#1e293b');
+              const allElements = clonedDoc.getElementsByTagName('*');
+              for (let i = 0; i < allElements.length; i++) {
+                const el = allElements[i] as HTMLElement;
+                if (el.style && el.style.cssText) {
+                  el.style.cssText = stripColors(el.style.cssText);
+                }
+                // Handle SVG attributes
+                if (el.tagName.toLowerCase() === 'svg' || el.parentElement?.tagName.toLowerCase() === 'svg') {
+                  ['fill', 'stroke', 'stop-color'].forEach(attr => {
+                    const val = el.getAttribute(attr);
+                    if (val && (val.includes('okl'))) {
+                      el.setAttribute(attr, '#1e293b');
+                    }
+                  });
+                }
               }
             }
 
-            // Handle SVG attributes for icons
-            if (el.tagName.toLowerCase() === 'svg' || el.parentElement?.tagName.toLowerCase() === 'svg') {
-              ['fill', 'stroke', 'stop-color'].forEach(attr => {
-                const val = el.getAttribute(attr);
-                if (val && (val.includes('oklab') || val.includes('oklch'))) {
-                  el.setAttribute(attr, '#1e293b');
-                }
-              });
+            const clonedReport = clonedDoc.getElementById('report-container');
+            if (clonedReport) {
+              clonedReport.style.width = '1000px';
+              clonedReport.style.margin = '0 auto';
+              clonedReport.style.padding = '40px';
+              clonedReport.style.height = 'auto';
+              clonedReport.style.backgroundColor = '#F8FAFC';
             }
+
+            // Hide counseling script in PDF
+            const script = clonedDoc.getElementById('counseling-script');
+            if (script) {
+              script.style.display = 'none';
+            }
+
+            const style = clonedDoc.createElement('style');
+            style.innerHTML = `
+              * { 
+                transition: none !important;
+                animation: none !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                box-shadow: none !important;
+                text-shadow: none !important;
+              }
+            `;
+            clonedDoc.head.appendChild(style);
+          } catch (e) {
+            console.error('Error in onclone:', e);
           }
         }
       });
       
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      if (!canvas) throw new Error('Canvas generation failed');
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.85);
       const pdf = new jsPDF('p', 'mm', 'a4');
       
       const imgProps = pdf.getImageProperties(imgData);
@@ -279,7 +285,7 @@ export default function App() {
       heightLeft -= pdfHeight;
 
       // Subsequent pages if content is long
-      while (heightLeft > 0) {
+      while (heightLeft > 1) { // Use 1mm epsilon to avoid empty last page
         position = heightLeft - imgHeight;
         pdf.addPage();
         pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
@@ -289,7 +295,7 @@ export default function App() {
       pdf.save(`SmartIncome_Report_${report?.customerName || 'Analysis'}.pdf`);
     } catch (err) {
       console.error('PDF generation error:', err);
-      alert('PDF 생성 중 오류가 발생했습니다.');
+      alert('PDF 생성 중 오류가 발생했습니다. 브라우저를 새로고침하거나 잠시 후 다시 시도해 주세요.');
     } finally {
       setIsDownloading(false);
     }
