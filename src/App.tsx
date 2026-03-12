@@ -64,19 +64,13 @@ const FOCUS_OPTIONS = [
 export default function App() {
   const [currentUser, setCurrentUser] = useState<{ id: string; role: string } | null>(null);
   const [showUserMgmt, setShowUserMgmt] = useState(false);
-  const [loginId, setLoginId] = useState('admin');
-  const [loginPw, setLoginPw] = useState('260301');
+  const [loginId, setLoginId] = useState('');
+  const [loginPw, setLoginPw] = useState('');
   
   const [step, setStep] = useState(0); // Start at 0 for API Key setup
 
   React.useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        const role = session.user.email === 'hih@sciencecenter.or.kr' ? 'admin' : 'user';
-        setCurrentUser({ id: session.user.email || session.user.id, role });
-      }
-    });
-
+    // Session recovery disabled to force login every time as per user request
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         const role = session.user.email === 'hih@sciencecenter.or.kr' ? 'admin' : 'user';
@@ -101,6 +95,12 @@ export default function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
+
+  const handleStart = () => {
+    if (userApiKey) {
+      setStep(1);
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -338,6 +338,7 @@ export default function App() {
     setStep(0);
     setLoginId('');
     setLoginPw('');
+    setUserApiKey('');
   };
 
   if (!currentUser) {
@@ -425,6 +426,14 @@ export default function App() {
               </button>
             )}
             <button 
+              onClick={() => setStep(0)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${step === 0 ? 'bg-[#D4AF37] text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+              title="API Key 설정"
+            >
+              <ShieldAlert className="w-4 h-4" />
+              API 설정
+            </button>
+            <button 
               onClick={handleLogout}
               className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
               title="로그아웃"
@@ -507,7 +516,7 @@ export default function App() {
 
                 <button 
                   disabled={!userApiKey}
-                  onClick={() => setStep(1)}
+                  onClick={handleStart}
                   className="w-full mt-10 bg-[#0F172A] text-white py-5 rounded-2xl font-bold shadow-lg shadow-slate-200 hover:bg-[#1E293B] active:scale-[0.99] transition-all disabled:opacity-30"
                 >
                   분석 시작하기
