@@ -194,13 +194,12 @@ export default function App() {
     try {
       const element = reportRef.current;
       
-      // Use a higher scale for better resolution
       const canvas = await html2canvas(element, {
-        scale: 3, 
+        scale: 2.5, // Balanced scale for quality vs file size
         useCORS: true,
         logging: false,
         backgroundColor: '#F8FAFC',
-        windowWidth: 1200, // Force a desktop-like width for the capture
+        windowWidth: 1200,
         onclone: (clonedDoc) => {
           const clonedReport = clonedDoc.getElementById('report-container');
           if (clonedReport) {
@@ -209,63 +208,39 @@ export default function App() {
             clonedReport.style.padding = '40px';
           }
 
-          // Force remove problematic color functions but keep the design
+          // Hide counseling script in PDF as requested
+          const script = clonedDoc.getElementById('counseling-script');
+          if (script) {
+            script.style.display = 'none';
+          }
+
           const style = clonedDoc.createElement('style');
           style.innerHTML = `
             * { 
               transition: none !important;
               animation: none !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
             }
-            /* Replace oklab/oklch shadows with safe rgba */
             [class*="shadow"] {
-              box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05) !important;
-            }
-            .shadow-2xl {
-              box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.1) !important;
-            }
-            .shadow-xl {
-              box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08) !important;
+              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05) !important;
             }
           `;
           clonedDoc.head.appendChild(style);
 
-          // Aggressively strip oklab/oklch from all style tags
+          // Strip oklab/oklch
           const styleTags = clonedDoc.getElementsByTagName('style');
           for (let i = 0; i < styleTags.length; i++) {
             try {
-              // Replace oklch/oklab with a safe slate color instead of pure black
               styleTags[i].innerHTML = styleTags[i].innerHTML
                 .replace(/oklab\([^)]+\)/g, '#1e293b')
                 .replace(/oklch\([^)]+\)/g, '#1e293b');
-            } catch (e) {
-              console.warn('Failed to patch style tag:', e);
-            }
+            } catch (e) {}
           }
 
-          // Also try to clean up actual CSSStyleSheets
-          try {
-            for (let i = 0; i < clonedDoc.styleSheets.length; i++) {
-              try {
-                const sheet = clonedDoc.styleSheets[i] as CSSStyleSheet;
-                const rules = sheet.cssRules || sheet.rules;
-                if (!rules) continue;
-                for (let j = rules.length - 1; j >= 0; j--) {
-                  const rule = rules[j];
-                  if (rule.cssText.includes('oklab') || rule.cssText.includes('oklch')) {
-                    // Instead of deleting, try to replace the text if possible, 
-                    // but deleteRule is safer to prevent parsing errors
-                    sheet.deleteRule(j);
-                  }
-                }
-              } catch (e) {}
-            }
-          } catch (e) {}
-
-          // Recursively strip oklab/oklch from inline styles and SVG attributes
           const allElements = clonedDoc.getElementsByTagName('*');
           for (let i = 0; i < allElements.length; i++) {
             const el = allElements[i] as HTMLElement;
-            
             if (el.style && el.style.cssText) {
               const cssText = el.style.cssText;
               if (cssText.includes('oklab') || cssText.includes('oklch')) {
@@ -275,6 +250,7 @@ export default function App() {
               }
             }
 
+            // Handle SVG attributes for icons
             if (el.tagName.toLowerCase() === 'svg' || el.parentElement?.tagName.toLowerCase() === 'svg') {
               ['fill', 'stroke', 'stop-color'].forEach(attr => {
                 const val = el.getAttribute(attr);
@@ -287,22 +263,33 @@ export default function App() {
         }
       });
       
-      const imgData = canvas.toDataURL('image/png', 1.0);
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
       const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
       
       const imgProps = pdf.getImageProperties(imgData);
-      const contentWidth = pdfWidth;
-      const contentHeight = (imgProps.height * contentWidth) / imgProps.width;
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
       
-      // If content is longer than one page, we might need multiple pages, 
-      // but for now let's just ensure it fits or scales well.
-      pdf.addImage(imgData, 'PNG', 0, 0, contentWidth, contentHeight, undefined, 'SLOW');
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      // First page
+      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
+      heightLeft -= pdfHeight;
+
+      // Subsequent pages if content is long
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= pdfHeight;
+      }
+
       pdf.save(`SmartIncome_Report_${report?.customerName || 'Analysis'}.pdf`);
     } catch (err) {
       console.error('PDF generation error:', err);
-      alert('PDF 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+      alert('PDF 생성 중 오류가 발생했습니다.');
     } finally {
       setIsDownloading(false);
     }
@@ -813,7 +800,7 @@ export default function App() {
                 </div>
 
                 {/* Counseling Script */}
-                <div className="bg-[#FEE500] rounded-[2rem] p-10 shadow-xl">
+                <div id="counseling-script" className="bg-[#FEE500] rounded-[2rem] p-10 shadow-xl">
                   <div className="flex items-center justify-between mb-8">
                     <h3 className="text-lg font-bold flex items-center gap-3 text-[#3C1E1E]">
                       <MessageSquare className="w-5 h-5" />
