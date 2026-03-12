@@ -13,7 +13,6 @@ import {
   ChevronRight, 
   Loader2, 
   Copy, 
-  Download,
   ShieldCheck,
   TrendingDown,
   AlertTriangle,
@@ -28,7 +27,6 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjs from 'pdfjs-dist';
 import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 import { generateInsuranceReport } from './services/geminiService';
 import { supabase } from './lib/supabase';
 
@@ -91,7 +89,7 @@ export default function App() {
   const [toneSample, setToneSample] = useState('');
   const [report, setReport] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [isSavingImage, setIsSavingImage] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -187,117 +185,115 @@ export default function App() {
     alert('클립보드에 복사되었습니다.');
   };
 
-  const handleDownloadPDF = async () => {
+  const generateCanvas = async () => {
+    if (!reportRef.current) return null;
+    return await html2canvas(reportRef.current, {
+      scale: 2, 
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      backgroundColor: '#F8FAFC',
+      windowWidth: 1200,
+      onclone: (clonedDoc) => {
+        try {
+          const stripColors = (text: string) => {
+            if (!text) return text;
+            // More robust regex to catch oklab/oklch with various spacings and alpha
+            return text.replace(/okl[abch]+\s*\([^)]+\)/gi, '#1e293b');
+          };
+
+          if (clonedDoc.documentElement) {
+            // 1. Process all style tags
+            const styleTags = clonedDoc.getElementsByTagName('style');
+            for (let i = 0; i < styleTags.length; i++) {
+              styleTags[i].innerHTML = stripColors(styleTags[i].innerHTML);
+            }
+
+            // 2. Process all elements for inline styles and computed style overrides
+            const allElements = clonedDoc.getElementsByTagName('*');
+            for (let i = 0; i < allElements.length; i++) {
+              const el = allElements[i] as HTMLElement;
+              
+              // Check inline styles
+              if (el.style && el.style.cssText) {
+                el.style.cssText = stripColors(el.style.cssText);
+              }
+
+              // Force override computed styles that use oklab/oklch
+              // html2canvas often fails when it reads computed styles from the browser
+              try {
+                const computed = window.getComputedStyle(el);
+                if (computed.color?.includes('okl')) el.style.setProperty('color', '#1e293b', 'important');
+                if (computed.backgroundColor?.includes('okl')) el.style.setProperty('background-color', '#ffffff', 'important');
+                if (computed.borderColor?.includes('okl')) el.style.setProperty('border-color', '#e2e8f0', 'important');
+                if (computed.fill?.includes('okl')) el.style.setProperty('fill', '#1e293b', 'important');
+                if (computed.stroke?.includes('okl')) el.style.setProperty('stroke', '#1e293b', 'important');
+              } catch (e) {
+                // Ignore errors in computed style access
+              }
+
+              // Handle SVG attributes
+              if (el.tagName.toLowerCase() === 'svg' || el.parentElement?.tagName.toLowerCase() === 'svg') {
+                ['fill', 'stroke', 'stop-color'].forEach(attr => {
+                  const val = el.getAttribute(attr);
+                  if (val && val.toLowerCase().includes('okl')) {
+                    el.setAttribute(attr, '#1e293b');
+                  }
+                });
+              }
+            }
+          }
+
+          const clonedReport = clonedDoc.getElementById('report-container');
+          if (clonedReport) {
+            clonedReport.style.width = '1000px';
+            clonedReport.style.margin = '0 auto';
+            clonedReport.style.padding = '40px';
+            clonedReport.style.height = 'auto';
+            clonedReport.style.backgroundColor = '#F8FAFC';
+          }
+
+          const script = clonedDoc.getElementById('counseling-script');
+          if (script) {
+            script.style.display = 'none';
+          }
+
+          const style = clonedDoc.createElement('style');
+          style.innerHTML = `
+            * { 
+              transition: none !important;
+              animation: none !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+              box-shadow: none !important;
+              text-shadow: none !important;
+            }
+          `;
+          clonedDoc.head.appendChild(style);
+        } catch (e) {
+          console.error('Error in onclone:', e);
+        }
+      }
+    });
+  };
+
+  const handleSaveImage = async () => {
     if (!reportRef.current) return;
     
-    setIsDownloading(true);
+    setIsSavingImage(true);
     try {
-      const element = reportRef.current;
-      
-      const canvas = await html2canvas(element, {
-        scale: 2, 
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        backgroundColor: '#F8FAFC',
-        windowWidth: 1200,
-        onclone: (clonedDoc) => {
-          try {
-            // Aggressively remove all oklab/oklch from the entire document's HTML
-            // This is the most reliable way to stop html2canvas from seeing 이 strings
-            const stripColors = (html: string) => {
-              return html.replace(/okl[abch]+\([^)]+\)/g, '#1e293b');
-            };
-
-            if (clonedDoc.documentElement) {
-              // We do it in chunks to be safer, or just style tags + inline styles
-              const styleTags = clonedDoc.getElementsByTagName('style');
-              for (let i = 0; i < styleTags.length; i++) {
-                styleTags[i].innerHTML = stripColors(styleTags[i].innerHTML);
-              }
-
-              const allElements = clonedDoc.getElementsByTagName('*');
-              for (let i = 0; i < allElements.length; i++) {
-                const el = allElements[i] as HTMLElement;
-                if (el.style && el.style.cssText) {
-                  el.style.cssText = stripColors(el.style.cssText);
-                }
-                // Handle SVG attributes
-                if (el.tagName.toLowerCase() === 'svg' || el.parentElement?.tagName.toLowerCase() === 'svg') {
-                  ['fill', 'stroke', 'stop-color'].forEach(attr => {
-                    const val = el.getAttribute(attr);
-                    if (val && (val.includes('okl'))) {
-                      el.setAttribute(attr, '#1e293b');
-                    }
-                  });
-                }
-              }
-            }
-
-            const clonedReport = clonedDoc.getElementById('report-container');
-            if (clonedReport) {
-              clonedReport.style.width = '1000px';
-              clonedReport.style.margin = '0 auto';
-              clonedReport.style.padding = '40px';
-              clonedReport.style.height = 'auto';
-              clonedReport.style.backgroundColor = '#F8FAFC';
-            }
-
-            // Hide counseling script in PDF
-            const script = clonedDoc.getElementById('counseling-script');
-            if (script) {
-              script.style.display = 'none';
-            }
-
-            const style = clonedDoc.createElement('style');
-            style.innerHTML = `
-              * { 
-                transition: none !important;
-                animation: none !important;
-                -webkit-print-color-adjust: exact !important;
-                print-color-adjust: exact !important;
-                box-shadow: none !important;
-                text-shadow: none !important;
-              }
-            `;
-            clonedDoc.head.appendChild(style);
-          } catch (e) {
-            console.error('Error in onclone:', e);
-          }
-        }
-      });
-      
+      const canvas = await generateCanvas();
       if (!canvas) throw new Error('Canvas generation failed');
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.85);
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      
-      const imgProps = pdf.getImageProperties(imgData);
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
-      
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      // First page
-      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pdfHeight;
-
-      // Subsequent pages if content is long
-      while (heightLeft > 1) { // Use 1mm epsilon to avoid empty last page
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pdfHeight;
-      }
-
-      pdf.save(`SmartIncome_Report_${report?.customerName || 'Analysis'}.pdf`);
-    } catch (err) {
-      console.error('PDF generation error:', err);
-      alert('PDF 생성 중 오류가 발생했습니다. 브라우저를 새로고침하거나 잠시 후 다시 시도해 주세요.');
+      const link = document.createElement('a');
+      link.download = `${report?.customerName || '고객'}_보험분석리포트.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err: any) {
+      console.error('Image Error:', err);
+      alert('이미지 저장 중 오류가 발생했습니다.');
     } finally {
-      setIsDownloading(false);
+      setIsSavingImage(false);
     }
   };
 
@@ -843,19 +839,19 @@ export default function App() {
                   새로운 분석
                 </button>
                 <button 
-                  disabled={isDownloading}
-                  onClick={handleDownloadPDF}
+                  disabled={isSavingImage}
+                  onClick={handleSaveImage}
                   className="flex-[2] bg-[#0F172A] text-white py-6 rounded-2xl font-bold shadow-xl shadow-slate-200 hover:bg-[#1E293B] flex items-center justify-center gap-3 transition-all disabled:opacity-50"
                 >
-                  {isDownloading ? (
+                  {isSavingImage ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      저장 중...
+                      이미지 생성 중...
                     </>
                   ) : (
                     <>
-                      <Download className="w-5 h-5 text-[#D4AF37]" />
-                      리포트 저장
+                      <FileText className="w-5 h-5 text-[#D4AF37]" />
+                      이미지로 저장
                     </>
                   )}
                 </button>
