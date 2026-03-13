@@ -85,6 +85,7 @@ export default function App() {
   const [pdfText, setPdfText] = useState('');
   const [fileName, setFileName] = useState('');
   const [focusPoints, setFocusPoints] = useState<string[]>([]);
+  const [pointComments, setPointComments] = useState<Record<string, string>>({});
   const [additionalComments, setAdditionalComments] = useState('');
   const [toneSample, setToneSample] = useState('');
   const [report, setReport] = useState<ReportData | null>(null);
@@ -167,6 +168,7 @@ export default function App() {
       const result = await generateInsuranceReport({
         pdfText,
         focusPoints,
+        pointComments,
         additionalComments,
         toneSample,
         apiKey: userApiKey
@@ -314,7 +316,13 @@ export default function App() {
       });
 
       if (authError) {
-        setError(authError.message === 'Invalid login credentials' ? '아이디 또는 비밀번호가 일치하지 않습니다.' : authError.message);
+        let errorMessage = authError.message;
+        if (authError.message === 'Invalid login credentials') {
+          errorMessage = '아이디 또는 비밀번호가 일치하지 않습니다.';
+        } else if (authError.message === 'Email not confirmed') {
+          errorMessage = '이메일 인증이 완료되지 않았습니다. 가입하신 이메일의 편지함을 확인하여 인증 링크를 클릭해 주세요.';
+        }
+        setError(errorMessage);
         return;
       }
 
@@ -615,19 +623,38 @@ export default function App() {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4">
                   {FOCUS_OPTIONS.map((option) => (
-                    <button
-                      key={option.id}
-                      onClick={() => toggleFocusPoint(option.label)}
-                      className={`flex items-center gap-4 p-5 rounded-2xl border-2 transition-all text-left group ${focusPoints.includes(option.label) ? 'border-[#0F172A] bg-slate-50' : 'border-slate-50 hover:border-slate-100'}`}
-                    >
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${focusPoints.includes(option.label) ? 'bg-[#0F172A] text-[#D4AF37]' : 'bg-slate-50 text-slate-400'}`}>
-                        <option.icon className="w-6 h-6" />
-                      </div>
-                      <span className={`font-bold ${focusPoints.includes(option.label) ? 'text-[#0F172A]' : 'text-slate-600'}`}>{option.label}</span>
-                      {focusPoints.includes(option.label) && <CheckCircle2 className="ml-auto w-6 h-6 text-[#0F172A]" />}
-                    </button>
+                    <div key={option.id} className="space-y-3">
+                      <button
+                        onClick={() => toggleFocusPoint(option.label)}
+                        className={`w-full flex items-center gap-4 p-5 rounded-2xl border-2 transition-all text-left group ${focusPoints.includes(option.label) ? 'border-[#0F172A] bg-slate-50' : 'border-slate-50 hover:border-slate-100'}`}
+                      >
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${focusPoints.includes(option.label) ? 'bg-[#0F172A] text-[#D4AF37]' : 'bg-slate-50 text-slate-400'}`}>
+                          <option.icon className="w-6 h-6" />
+                        </div>
+                        <span className={`font-bold ${focusPoints.includes(option.label) ? 'text-[#0F172A]' : 'text-slate-600'}`}>{option.label}</span>
+                        {focusPoints.includes(option.label) && <CheckCircle2 className="ml-auto w-6 h-6 text-[#0F172A]" />}
+                      </button>
+                      
+                      <AnimatePresence>
+                        {focusPoints.includes(option.label) && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <textarea
+                              value={pointComments[option.label] || ''}
+                              onChange={(e) => setPointComments(prev => ({ ...prev, [option.label]: e.target.value }))}
+                              placeholder={`${option.label}에 대한 추가 코멘트를 입력하세요...`}
+                              className="w-full p-4 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-[#0F172A] outline-none transition-all text-sm min-h-[80px] resize-none"
+                            />
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   ))}
                 </div>
 
@@ -906,6 +933,9 @@ function UserManagementView() {
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: newId,
       password: newPw,
+      options: {
+        emailRedirectTo: window.location.origin,
+      }
     });
 
     if (authError) {
@@ -926,6 +956,7 @@ function UserManagementView() {
       } else {
         setNewId('');
         setNewPw('');
+        setError('사용자가 추가되었습니다. 해당 이메일로 발송된 인증 메일을 확인해야 로그인이 가능합니다.');
         fetchUsers();
       }
     }
@@ -992,6 +1023,10 @@ function UserManagementView() {
             등록하기
           </button>
         </form>
+        <p className="mt-4 text-sm text-slate-500 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4" />
+          신규 사용자는 가입 후 이메일 인증을 완료해야 로그인이 가능합니다.
+        </p>
         {error && <p className="mt-4 text-red-500 text-xs font-bold">{error}</p>}
       </div>
 
